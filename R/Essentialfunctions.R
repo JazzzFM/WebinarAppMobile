@@ -1,36 +1,108 @@
-retencionAtencion <- function(bd, webinar, horas){
+retencion_atencion <- function(bd, horas){
+  
+  if(bd %>% pull(id) %>% unique >= 4){
   Asist <- dplyr::filter(
-    bd, id == {{webinar}}, Asistió == 'Sí', is.na(`Nombre de fuente`),
+    bd, Asistió == 'Sí',
     !Nombre %in% c('TEAM EMILIO', 'TEAM', 'test')) %>% 
     dplyr::mutate(
       correo = as.factor(`Correo electrónico`),
-      fecha_ini = mdy_hms(`Puesto de trabajo`),
-      fecha_fin = mdy_hms(`Hora de salida`) ) %>% 
+      fecha_ini = floor_date(mdy_hms(`Puesto de trabajo`), unit = "minute"),
+      fecha_fin = floor_date(mdy_hms(`Hora de salida`), unit = "minute")) %>% 
     dplyr::group_by(correo) %>%
     dplyr::mutate(fecha_max = max(fecha_fin)) %>% ungroup %>% 
     mutate(correo = fct_reorder(correo, fecha_max)) %>% 
     dplyr::select(correo, fecha,fecha_ini, fecha_fin)
+  }else{
+    Asist <- dplyr::filter(
+      bd, Asistió == 'Sí',
+      !Nombre %in% c('TEAM EMILIO', 'TEAM', 'test')) %>% 
+      dplyr::mutate(
+        correo = as.factor(`Correo electrónico`),
+        fecha_ini = gsub("mar.", "", `Puesto de trabajo`),
+        fecha_fin = gsub("mar.", "", `Hora de salida`),
+        fecha_ini = paste("March ", fecha_ini) %>% mdy_hms() %>% floor_date(unit = "minute"),
+        fecha_fin = paste("March ", fecha_fin) %>% mdy_hms() %>% floor_date(unit = "minute")) %>% 
+      dplyr::group_by(correo) %>%
+      dplyr::mutate(fecha_max = max(fecha_fin)) %>% ungroup %>% 
+      mutate(correo = fct_reorder(correo, fecha_max)) %>% 
+      dplyr::select(correo, fecha,fecha_ini, fecha_fin)
+  }
   
-fechaWeb <- pull(Asist, fecha)
-fechaCompleta <- paste(fechaWeb, horas, sep = " ")
-horas <- as_datetime(fechaCompleta)
-
-Graph <- Asist %>%  
+  y_0 <- pull(Asist, correo) %>% unique %>% length
+  
+  fechaWeb <- pull(Asist, fecha)
+  fechaCompleta <- paste(fechaWeb, horas, sep = " ")
+  horas <- as_datetime(fechaCompleta)
+  
+  Graph <- Asist %>%  
     ggplot() +
     geom_segment(
       aes(y = correo, yend = correo, x = fecha_ini, xend = fecha_fin),
       lineend = 'round', linejoin = 'round',
       size = 1, arrow = arrow(length = unit(0.05, "inches")))+ 
     geom_vline(xintercept = horas, linetype="dotted", color = "blue", size = 1.0) +
-    annotate(x = as_datetime("2021-04-08 19:00:00"), y = 31.5, geom = "label", hjust = 0.5, label = "Historia previa") + 
-    annotate(x = as_datetime("2021-04-08 20:00:00"), y = 28.5, geom = "label", hjust = 0.5, label = "3 Secretos") + 
-    annotate(x = as_datetime("2021-04-08 20:30:00"), y = 25.5, geom = "label", hjust = 0.5,label = "Ronda de preguntas") +
-    annotate(x = as_datetime("2021-04-08 20:45:00"), y = 10.5, geom = "label", hjust = 0.5, label = "Oferta") + 
-    annotate(x = as_datetime("2021-04-08 21:10:00"), y = 5.5, geom = "label", hjust = 0.5, label = "Fin Webinar") +
-    #labs(title = "Retención de la audiencia") +
+    annotate(x = horas[1] - (15*60), y = y_0 - 3, geom = "label", hjust = 0.5, label = "Historia previa") +
+    annotate(x = horas[2] - (30*60), y = y_0 - 3, geom = "label", hjust = 0.5, label = "3 Secretos") +
+    annotate(x = horas[3] - (7*60) , y = y_0 - 3, geom = "label", hjust = 0.5,label = "Oferta") +
+    annotate(x = horas[4] - (15*60), y = y_0 - 5, geom = "label", hjust = 0.5, label = "Ronda de preguntas") +
+    annotate(x = horas[4], y = y_0 - 8, geom = "label", hjust = 0.5, label = "Fin Webinar") +
+    labs(title = "Retención de la audiencia") +
     xlab("Tiempo de Webinar") +
     ylab("Correo de personas") +
     theme_minimal()
+  
+  return(Graph)
+}
+
+timel_pct_audiencia <- function(bd, horas){
+  if(bd %>% pull(id) %>% unique >= 4){
+  bd <- dplyr::filter(bd,
+          Asistió == "Sí", is.na(`Nombre de fuente`)) %>% 
+        dplyr::group_by(`Correo electrónico`) %>%
+        dplyr::mutate(
+          fecha_ini = min(floor_date(mdy_hms(`Puesto de trabajo`),unit = "minute")),
+          fecha_fin = max(floor_date(mdy_hms(`Hora de salida`),unit = "minute"))) 
+  }else{
+    bd <- dplyr::filter(bd,
+            Asistió == "Sí", is.na(`Nombre de fuente`)) %>% 
+          dplyr::group_by(`Correo electrónico`) %>%
+          dplyr::mutate(
+            fecha_ini = gsub("mar.", "", `Puesto de trabajo`),
+            fecha_fin = gsub("mar.", "", `Hora de salida`),
+            fecha_ini = paste("March ", fecha_ini) %>% mdy_hms() %>% floor_date(unit = "minute"),
+            fecha_fin = paste("March ", fecha_fin) %>% mdy_hms() %>% floor_date(unit = "minute")) 
+  }
+  
+  df <- bd %>%
+        complete(fecha_fin = seq(
+          from=as.POSIXct(min(fecha_ini), tz="UTC"),
+          to=as.POSIXct(max(fecha_fin), tz="UTC"),
+          by="1 min"), fill = list(fecha_fin = NA)) %>% 
+        ungroup %>% 
+        # filter(grepl(x=`Correo electrónico`,pattern = "forest")) %>%
+        distinct(`Correo electrónico`, fecha_fin) %>% 
+        count(fecha_fin) %>% mutate(max = n == max(n)) %>% 
+        mutate(pct = n/max(n), abs = n, color_pct = cut(pct,c(0,.25,.5,.75,.9,1), 
+          c("(0%-25%]","(25%-50%]","(50%-75%]","(75%-90%]","(90%-100%]")))
+  
+  fechaWeb <- pull(bd, fecha)
+  fechaCompleta <- paste(fechaWeb, horas, sep = " ")
+  horas <- as_datetime(fechaCompleta)
+ 
+  x <- bd %>% pull(`Correo electrónico`) %>% unique %>% length
+  
+  Graph <- df %>% ggplot(aes(x = fecha_fin, y = n, fill=color_pct, color=color_pct)) +
+      geom_bar(stat = "identity") +
+      geom_vline(xintercept = horas, linetype="dotted", color = "blue", size = 1.0) +
+      annotate(x = horas[1] - (15*60), y = x, geom = "label", hjust = 0.5, label = "Historia previa") +
+      annotate(x = horas[2] - (30*60), y = x, geom = "label", hjust = 0.5, label = "3 Secretos") +
+      annotate(x = horas[3] - (5*60) , y = x , geom = "label", hjust = 0.5,label = "Oferta") +
+      annotate(x = horas[4] - (15*60), y = x-1, geom = "label", hjust = 0.5, label = "Ronda de preguntas") +
+      annotate(x = horas[4], y = x - 3, geom = "label", hjust = 0.5, label = "Fin Webinar") +
+      annotate(x = min(df$fecha_fin), y = x + 4, geom = "label", hjust = 0,
+             label = glue(" Asistentes máximos: {max(df$n)} ({count(df,max) %>% filter(max) %>% pull(n)} mins)")) +
+    annotate(x = min(df$fecha_fin), y = x + 2, geom = "label", hjust = 0, label = glue(" Asistentes únicos: {x}")) +
+    theme_minimal() 
   
   return(Graph)
 }

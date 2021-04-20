@@ -13,38 +13,6 @@ library(readxl)
 library(patchwork)
 source("R/Essentialfunctions.R")
 
-contactos_1 <- read_csv("data/18M.csv") %>% mutate(id = 1, fecha = as.Date('2021/03/18'))
-contactos_2 <- read_csv("data/20M.csv") %>% mutate(id = 2, fecha = as.Date('2021/03/20'))
-contactos_3 <- read_csv("data/26M.csv") %>% mutate(id = 3, fecha = as.Date('2021/03/26'))
-contactos_4 <- read_csv("data/08A.csv") %>% mutate(id = 4, fecha = as.Date('2021/04/08'))
-
-reporte_zoom <- dplyr::bind_rows(contactos_1, contactos_2) %>% 
-                dplyr::bind_rows(contactos_3) %>% 
-                dplyr::bind_rows(contactos_4)
-
-Registros <- dplyr::filter(reporte_zoom, is.na(`Nombre de fuente`), !Nombre %in% c('TEAM EMILIO', 'TEAM', 'test')) %>% 
-             dplyr::group_by(`Correo electrónico`, fecha) %>% 
-             dplyr::summarise('a' = n()) %>%
-             dplyr::group_by(fecha) %>%
-             dplyr::summarise('Registrados' = n()) 
-
-MAXWEB <- dplyr::filter(reporte_zoom, Asistió == 'Sí',  is.na(`Nombre de fuente`), !Nombre %in% c('TEAM EMILIO', 'TEAM', 'test')) %>% 
-          dplyr::group_by(`Correo electrónico`, fecha) %>%
-          dplyr::summarise('a' = n()) %>% 
-          dplyr::group_by(fecha) %>%
-          dplyr::summarise('Sí asistieron' = n()) 
-
-NOWEB <- dplyr::filter(reporte_zoom, Asistió == 'No', !Nombre %in% c('TEAM EMILIO', 'TEAM', 'test')) %>% 
-         dplyr::group_by(`Correo electrónico`, fecha) %>% 
-         dplyr::summarise('a' = n()) %>% 
-         dplyr::group_by(fecha) %>%
-         dplyr::summarise('No asistieron' = n()) 
-
-historico <- dplyr::left_join(Registros, MAXWEB, by = "fecha") %>% dplyr::left_join(NOWEB, by = "fecha")
-longer_historico <- pivot_longer(historico, Registrados:`No asistieron`, names_to = "categoria", values_to = "count")
-
-
- M <- readxl::read_excel("data/Metricas.xlsx", na = "---") %>% select(-"...2")
 
 shinyApp(
     ui = f7Page(
@@ -55,7 +23,11 @@ shinyApp(
                 hairline = TRUE,
                 shadow = TRUE
             ),
-            # main content
+        selectInput("filtro", label = "Seleccione el webinar",
+                       choices = c("Primer Webinar" = 1, "Segundo Webinar" = 2, "Tercer Webinar" = 3, "Cuarto Webinar" = 4, "Quinto Webinar" = 5),
+                       selected = c("Primer Webinar" = 1, "Segundo Webinar" = 2, "Tercer Webinar" = 3, "Cuarto Webinar" = 4, "Quinto Webinar" = 5)
+                    ),
+        # main content
             f7Shadow(
                 intensity = 20,
                 hover = TRUE,
@@ -84,7 +56,7 @@ shinyApp(
                 intensity = 20,
                 hover = TRUE,
                 f7Card(
-                    title = "Registros de personas que no asistieron",
+                    title = "Registros de personas",
                     plotOutput("NoAsistieron")
                 )
             ),
@@ -108,72 +80,76 @@ shinyApp(
     )),
     server = function(input, output) {
         
+        reporte_zoom <- reactiveValues(row = NULL, nota = NULL)
+        bd.filtrada <- reactiveValues(row = NULL, nota = NULL)
+        financial_metrics <- reactiveValues(row = NULL, nota = NULL)
+        horas_web <- reactiveValues(row = NULL, nota = NULL)
+        
+        reporte_zoom <- reactive({
+           reporte_zum <- list.files("data",pattern = ".csv") %>%
+                imap(~read_csv(glue::glue("data/{.x}")) %>% 
+                mutate(id = .y, fecha = ymd(gsub(".csv", "", .x)))) %>%
+                reduce(bind_rows)
+            
+            return(reporte_zum)
+        })
+
+        financial_metrics <- reactive({
+        M <- readxl::read_excel("data/Metricas.xlsx", na = "---") %>% select(-"...2")
+        return(M)
+        })
+        
+        horas_web <- reactive({
+            if(!!input$filtro == 5){
+                return(c('Historia previa'='19:24:00', '3 Secretos' = '20:30:00', 'Oferta' = '20:45:00', 'Preguntas' = '21:15:00'))  
+            }
+            if(!!input$filtro == 4){
+                return(c('Historia previa'='19:30:00', '3 Secretos' = '20:30:00', 'Oferta' = '20:50:00', 'Preguntas' = '21:20:00')) 
+            }
+            if(!!input$filtro == 3){
+                return(c('Historia previa'='12:44:00', '3 Secretos' = '13:51:00', 'Oferta' = '14:20:00', 'Preguntas' = '14:42:00')) 
+            }
+            if(!!input$filtro == 2){
+                return(c('Historia previa'='12:20:00', '3 Secretos' = '13:25:00', 'Oferta' = '13:41:00', 'Preguntas' = '14:13:00')) 
+            }
+            if(!!input$filtro == 1){
+                return(c('Historia previa'='19:16:00', '3 Secretos' = '20:02:00', 'Oferta' = '20:22:00', 'Preguntas' = '20:47:00')) 
+            }
+        })
+        
+        ################ Gráficas ##############################
+        
         output$Atencion <- renderPlot({
-            horas <- c('Historia previa'='19:30:00', '3 Secretos' = '20:30:00', 'Ronda de preguntas' = '20:40:00', 'Oferta' = '20:50:00')
-            retencionAtencion(reporte_zoom, webinar = 4, horas = horas)
+            reporte_zoom() %>% filter(id %in% !!input$filtro) %>% retencion_atencion(horas = horas_web())
         })
         
         output$porcentaje <- renderPlot({
-            a <- contactos_4
-            a <- a %>% filter(Asistió == "Sí", is.na(`Nombre de fuente`)) %>% 
-                group_by(`Correo electrónico`) %>%
-                mutate(fecha_ini = min(floor_date(mdy_hms(`Puesto de trabajo`),unit = "minute")),
-                       fecha_fin = max(floor_date(mdy_hms(`Hora de salida`),unit = "minute"))
-                ) 
-            b <- a %>%
-                complete(fecha_fin = seq(
-                    from=as.POSIXct(min(fecha_ini), tz="UTC"),
-                    to=as.POSIXct(max(fecha_fin), tz="UTC"),
-                    by="1 min"
-                ), fill = list(fecha_fin = NA)) %>% 
-                ungroup %>% 
-                # filter(grepl(x=`Correo electrónico`,pattern = "forest")) %>%
-                distinct(`Correo electrónico`, fecha_fin) %>% 
-                count(fecha_fin) %>% mutate(max = n == max(n)) %>% 
-                mutate(pct = n/max(n), abs = n, 
-                       color_pct = cut(pct,c(0,.25,.5,.75,.9,1),c("(0%-25%]","(25%-50%]","(50%-75%]","(75%-90%]","(90%-100%]")))
-            
-            # b %>% count(color_pct)
-            
-            ####
-            fecha <- ("2021/04/8")
-            horas <- c('Historia previa'='19:30:00', '3 Secretos' = '20:30:00',
-                       'Ronda de preguntas' = '20:40:00', 'Oferta' = '20:50:00')
-            fechaCompleta <- paste(fecha, horas, sep = " ")
-            horas <- as_datetime(fechaCompleta)
-            ###
-            x <- a %>% pull(`Correo electrónico`) %>% unique %>% length
-            b %>% ggplot(aes(x = fecha_fin, y = n, fill=color_pct, color=color_pct)) +
-                geom_bar(stat = "identity") + geom_vline(xintercept = horas, linetype="dotted", color = "blue", size = 1.0) +
-                annotate(x = as_datetime("2021-04-08 19:00:00"), y = 20.75, geom = "label", hjust = 0.5, label = "Historia previa") + 
-                annotate(x = as_datetime("2021-04-08 20:00:00"), y = 20.75, geom = "label", hjust = 0.5, label = "3 Secretos") + 
-                annotate(x = as_datetime("2021-04-08 20:30:00"), y = 20.65, geom = "label", hjust = 0.5,label = "Ronda de preguntas") +
-                annotate(x = as_datetime("2021-04-08 20:45:00"), y = 15.5, geom = "label", hjust = 0.5, label = "Oferta") + 
-                annotate(x = as_datetime("2021-04-08 21:10:00"), y = 10.3, geom = "label", hjust = 0.5, label = "Fin Webinar") +
-                annotate(x = min(b$fecha_fin), y = 25, geom = "label", hjust = 0,
-                         label = glue(" Asistentes máximos: {max(b$n)} ({count(b,max) %>% filter(max) %>% pull(n)} mins)")) +
-                annotate(x = min(b$fecha_fin), y = 23.5, geom = "label", hjust = 0, label = glue(" Asistentes únicos: {x}")) +
-                theme_minimal()
-            
-            # b %>%  
-            #     ggplot(aes(x = fecha_fin, y = pct, fill = color_pct)) + geom_bar(stat = "identity") + 
-            #     geom_vline(xintercept = horas, linetype="dotted", color = "blue", size = 1.0) +
-            #     annotate(x = as_datetime("2021-04-08 19:00:00"), y = 0.75, geom = "label", hjust = 0.5, label = "Historia previa") + 
-            #     annotate(x = as_datetime("2021-04-08 20:00:00"), y = 0.75, geom = "label", hjust = 0.5, label = "3 Secretos") + 
-            #     annotate(x = as_datetime("2021-04-08 20:30:00"), y = 0.65, geom = "label", hjust = 0.5,label = "Ronda de preguntas") +
-            #     annotate(x = as_datetime("2021-04-08 20:45:00"), y = 0.5, geom = "label", hjust = 0.5, label = "Oferta") + 
-            #     annotate(x = as_datetime("2021-04-08 21:10:00"), y = 0.3, geom = "label", hjust = 0.5, label = "Fin Webinar") + 
-            #     annotate(x = min(b$fecha_fin), y = max(b$pct),geom = "label", hjust = 0,
-            #              label = glue(" Asistentes máximos: {max(x)} ({count(b,max) %>% filter(max) %>% pull(n)} mins)")) +
-            #     scale_fill_manual(values = rev(colorRamps::green2red(5)) %>% set_names(levels(b$color_pct)),
-            #                       name = "% de asistencia") + scale_y_continuous(labels = scales::percent) +
-            # 
-            #     theme_minimal()
-            # 
+            reporte_zoom() %>% filter(id %in% !!input$filtro) %>% timel_pct_audiencia(horas = horas_web())
         })
         
         
         output$porcentajesA <- renderPlot({
+            Registros <- dplyr::filter(reporte_zoom(), is.na(`Nombre de fuente`), !Nombre %in% c('TEAM EMILIO', 'TEAM', 'test')) %>% 
+                dplyr::group_by(`Correo electrónico`, fecha) %>% 
+                dplyr::summarise('a' = n()) %>%
+                dplyr::group_by(fecha) %>%
+                dplyr::summarise('Registrados' = n()) 
+            
+            MAXWEB <- dplyr::filter(reporte_zoom(), Asistió == 'Sí',  is.na(`Nombre de fuente`), !Nombre %in% c('TEAM EMILIO', 'TEAM', 'test')) %>% 
+                dplyr::group_by(`Correo electrónico`, fecha) %>%
+                dplyr::summarise('a' = n()) %>% 
+                dplyr::group_by(fecha) %>%
+                dplyr::summarise('Sí asistieron' = n()) 
+            
+            NOWEB <- dplyr::filter(reporte_zoom(), Asistió == 'No', !Nombre %in% c('TEAM EMILIO', 'TEAM', 'test')) %>% 
+                dplyr::group_by(`Correo electrónico`, fecha) %>% 
+                dplyr::summarise('a' = n()) %>% 
+                dplyr::group_by(fecha) %>%
+                dplyr::summarise('No asistieron' = n()) 
+            
+            historico <- dplyr::left_join(Registros, MAXWEB, by = "fecha") %>% dplyr::left_join(NOWEB, by = "fecha")
+            longer_historico <- pivot_longer(historico, Registrados:`No asistieron`, names_to = "categoria", values_to = "count")
+            
             longer_historico %>% filter(categoria != "Registrados") %>% group_by(fecha) %>%  mutate(perc = 100*count/sum(count)) %>% 
                 ggplot(aes(x = fecha, y = perc, fill = categoria)) +  ylab("Porcentaje Asistencia vs No Asistencia") +
                 geom_bar(stat='identity') + theme_minimal()
@@ -181,7 +157,7 @@ shinyApp(
         })
         
         output$NoAsistieron <- renderPlot({
-            bd <- reporte_zoom %>%
+            bd <- reporte_zoom() %>%
                   dplyr::filter(
                          is.na(`Nombre de fuente`),
                          !Nombre %in% c('TEAM EMILIO', 'TEAM', 'test')) %>%
@@ -190,32 +166,30 @@ shinyApp(
                       Registro = paste(fecha, horaRegistro, sep = " ") %>% as_datetime()) %>% 
                   dplyr::select(Asistió, Registro)
             
-            fechas <- c('2021/03/18 19:00:00', '2021/03/24 12:00:00', '2021/03/26 12:00:00', '2021/04/08 19:00:00') %>% as_datetime()
+            fechas <- c('2021/03/18 19:00:00', '2021/03/20 12:00:00', '2021/03/26 12:00:00', '2021/04/08 19:00:00', '2021/04/15 19:00:00') %>% as_datetime()
             
             ggplot(bd, aes(x = Registro, color = Asistió, fill = Asistió)) +
                 geom_histogram( position="dodge")+
                 geom_vline(xintercept = fechas, linetype="dotted", color = "blue", size = 1.0) +
-                annotate(x = fechas[1], y = 40, geom = "label", hjust = 0.5, label = "Primer Webinar") + 
-                annotate(x = fechas[2], y = 40, geom = "label", hjust = 0.5, label = "Segundo Webinar") + 
-                annotate(x = fechas[3], y = 30, geom = "label", hjust = 0.5, label = "Tercer Webinar") + 
+                annotate(x = fechas[1], y = 60, geom = "label", hjust = 0.5, label = "Primer Webinar") + 
+                annotate(x = fechas[2], y = 50, geom = "label", hjust = 0.5, label = "Segundo Webinar") + 
+                annotate(x = fechas[3], y = 40, geom = "label", hjust = 0.5, label = "Tercer Webinar") + 
                 annotate(x = fechas[4], y = 40, geom = "label", hjust = 0.5, label = "Cuarto Webinar") +
+                annotate(x = fechas[5], y = 40, geom = "label", hjust = 0.5, label = "Quinto Webinar") +
                 theme(legend.position="top") +
                 theme_minimal()
         })
         
-        output$timeline <- renderPlot({
-           
-        })
 
         output$metricaRegistros <- renderPlot({
-            A <- as_tibble(t(slice(M, 1:7))) %>% select(-V2)
+            A <- as_tibble(t(slice(financial_metrics(), 1:7))) %>% select(-V2)
             names <- A %>% slice(1) %>% t
             colnames(names) <- "a"
             names <- names %>% as_tibble() %>% select(a) %>% pull
             colnames(A) <- names
             A <- slice(A, 2:4)
             
-            B <- as_tibble(t(slice(M, 9:18))) %>% slice(2:4)
+            B <- as_tibble(t(slice(financial_metrics(), 9:18))) %>% slice(2:4)
             colnames(B) <- c("Registros", "AsistentesTotales", "porcentAsistencia", "AsistenciaMáxima", "porcentAsistenciaMáxima",
                              "$CostoXlead", "VentasLegacy", "$VentasWebinar", "porcentConversiónLegacy", "$Ganancia")
             B <- select(B, c("Registros", "AsistentesTotales", "AsistenciaMáxima", "VentasLegacy"))
@@ -237,8 +211,31 @@ shinyApp(
                 )
             
             BD <- procesamiento_metricas(bd)
+            
+            Registros <- dplyr::filter(reporte_zoom(), is.na(`Nombre de fuente`), !Nombre %in% c('TEAM EMILIO', 'TEAM', 'test')) %>% 
+                dplyr::group_by(`Correo electrónico`, fecha) %>% 
+                dplyr::summarise('a' = n()) %>%
+                dplyr::group_by(fecha) %>%
+                dplyr::summarise('Registrados' = n()) 
+            
+            MAXWEB <- dplyr::filter(reporte_zoom(), Asistió == 'Sí',  is.na(`Nombre de fuente`), !Nombre %in% c('TEAM EMILIO', 'TEAM', 'test')) %>% 
+                dplyr::group_by(`Correo electrónico`, fecha) %>%
+                dplyr::summarise('a' = n()) %>% 
+                dplyr::group_by(fecha) %>%
+                dplyr::summarise('Sí asistieron' = n()) 
+            
+            NOWEB <- dplyr::filter(reporte_zoom(), Asistió == 'No', !Nombre %in% c('TEAM EMILIO', 'TEAM', 'test')) %>% 
+                dplyr::group_by(`Correo electrónico`, fecha) %>% 
+                dplyr::summarise('a' = n()) %>% 
+                dplyr::group_by(fecha) %>%
+                dplyr::summarise('No asistieron' = n()) 
+            
+            historico <- dplyr::left_join(Registros, MAXWEB, by = "fecha") %>% dplyr::left_join(NOWEB, by = "fecha")
+            longer_historico <- pivot_longer(historico, Registrados:`No asistieron`, names_to = "categoria", values_to = "count")
+            
+
             bd_1 <- longer_historico %>% filter(categoria == "Registrados")
-            bd_2 <- tibble(fecha = bd_1 %>% pull(fecha), categoria = "Ganancias", count = c(BD %>% pull(`$Ganancia`), NA))
+            bd_2 <- tibble(fecha = bd_1 %>% pull(fecha), categoria = "Ganancias", count = c(BD %>% pull(`$Ganancia`), NA, NA))
             
             bd <- dplyr::bind_rows(bd_1, bd_2)
             
@@ -248,14 +245,14 @@ shinyApp(
         })
         
         output$metricaMarketing <- renderPlot({
-            A <- as_tibble(t(slice(M, 1:7))) %>% select(-V2)
+            A <- as_tibble(t(slice(financial_metrics(), 1:7))) %>% select(-V2)
             names <- A %>% slice(1) %>% t
             colnames(names) <- "a"
             names <- names %>% as_tibble() %>% select(a) %>% pull
             colnames(A) <- names
             A <- slice(A, 2:4)
 
-            B <- as_tibble(t(slice(M, 9:18))) %>% slice(2:4)
+            B <- as_tibble(t(slice(financial_metrics(), 9:18))) %>% slice(2:4)
             colnames(B) <- c("Registros", "AsistentesTotales", "porcentAsistencia", "AsistenciaMáxima", "porcentAsistenciaMáxima",
                              "$CostoXlead", "VentasLegacy", "$VentasWebinar", "porcentConversiónLegacy", "$Ganancia")
             B <- select(B, c("Registros", "AsistentesTotales", "AsistenciaMáxima", "VentasLegacy"))
